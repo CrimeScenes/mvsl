@@ -1,0 +1,142 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = game:GetService("Workspace").CurrentCamera
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local lastClickTime = 0
+local isToggled = false
+
+local config = shared.Private.Trigger
+local Delay = config.Delay
+local Key = config.Activation.Keybind
+local TriggerEnabled = config.Enabled
+local Mode = config.Activation.Mode
+
+Delay = math.clamp(Delay, 0.0001, 0.06)
+
+local closeRangeHitboxSize = 0.9
+local midRangeHitboxSize = 0.6
+local farRangeHitboxSize = 0.3
+
+local function calculateHitboxSize(distance)
+    if distance <= 18 then
+        return closeRangeHitboxSize
+    elseif distance <= 30 then
+        return midRangeHitboxSize
+    else
+        return farRangeHitboxSize
+    end
+end
+
+local function getMousePosition()
+    local mouse = UserInputService:GetMouseLocation()
+    return mouse.X, mouse.Y
+end
+
+local function isMouseOnPlayer(player)
+    local character = player.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local rootPart = character.HumanoidRootPart
+        local headPart = character:FindFirstChild("Head")
+        local bodyParts = {rootPart, headPart}
+
+        for _, part in pairs(bodyParts) do
+            if part then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                local mouseX, mouseY = getMousePosition()
+
+                local distance = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(mouseX, mouseY)).Magnitude
+                -- Only return true if the mouse is over the player's body part (within a small radius of the body)
+                if distance <= 20 then  -- Adjust this radius as needed
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function isUsingKnife()
+    local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    if currentTool then
+        local ignoredTools = {"knife", "katana", "phone", "wallet", "combat"}
+        return table.find(ignoredTools, currentTool.Name:lower()) ~= nil
+    end
+    return false
+end
+
+local function aimAtPlayer(player)
+    local character = player.Character
+    if not character then return end
+
+    local targetPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
+    if not targetPart then return end
+
+    local distance = (targetPart.Position - Camera.CFrame.Position).Magnitude
+    local hitboxSize = calculateHitboxSize(distance)
+
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+    if onScreen then
+        local jitter = Vector2.new(math.random(-hitboxSize, hitboxSize), math.random(-hitboxSize, hitboxSize))
+        local adjustedPos = Vector2.new(screenPos.X, screenPos.Y) + jitter
+
+        local mouseX, mouseY = getMousePosition()
+        local moveSpeed = 0.1
+
+        local newX = mouseX + (adjustedPos.X - mouseX) * moveSpeed
+        local newY = mouseY + (adjustedPos.Y - mouseY) * moveSpeed
+
+        if os.clock() - lastClickTime >= Delay and not isUsingKnife() then
+            lastClickTime = os.clock()
+            mouse1click(newX, newY)
+        end
+    end
+end
+
+local function fireWeapon(player)
+    local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    if currentTool and not isUsingKnife() then
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if humanoid and humanoid.Health > 0 then
+            if currentTool:FindFirstChild("Activate") then
+                currentTool:Activate()
+            end
+        end
+    end
+end
+
+-- Triggerbot activation on any player that the mouse is pointing to
+RunService.RenderStepped:Connect(function()
+    if TriggerEnabled and isToggled then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                -- Check if the mouse is on the player
+                if isMouseOnPlayer(player) then
+                    local targetPart = player.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPart then
+                        aimAtPlayer(player)
+                        fireWeapon(player)
+                        break  -- Triggerbot only fires on the first player it detects
+                    end
+                end
+            end
+        end
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode.Name == Key then
+        if Mode == "toggle" then
+            isToggled = not isToggled
+        elseif Mode == "hold" then
+            isToggled = true
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode.Name == Key and Mode == "hold" then
+        isToggled = false
+    end
+end)
